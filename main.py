@@ -20,7 +20,7 @@ def get_premarket_movement(positions):
             
             # Get today's regular market data
             today_data = ticker.history(
-                start=today - timedelta(days=1),  # Get yesterday too for reference
+                start=today - timedelta(days=1),
                 end=today + timedelta(days=1),
                 interval='1d'
             )
@@ -39,6 +39,10 @@ def get_premarket_movement(positions):
                 entry_price = position_data['entry_price']
                 quantity = position_data['quantity']
                 
+                # Get today's open and previous close
+                prev_close = today_data['Close'].iloc[-2]
+                today_open = today_data['Open'].iloc[-1]
+                
                 # Calculate position P/L
                 total_value = quantity * current_price
                 total_cost = quantity * entry_price
@@ -46,7 +50,6 @@ def get_premarket_movement(positions):
                 position_pl_pct = ((current_price - entry_price) / entry_price) * 100
                 
                 # Calculate today's movement
-                prev_close = today_data['Close'].iloc[-2]  # Yesterday's close
                 today_change = current_price - prev_close
                 today_change_pct = (today_change / prev_close) * 100
                 
@@ -68,6 +71,8 @@ def get_premarket_movement(positions):
                     symbol,
                     f"{quantity:.2f}",
                     f"${entry_price:.2f}",
+                    f"${prev_close:.2f}",
+                    f"${today_open:.2f}",
                     f"${current_price:.2f}",
                     today_change_str,
                     pl_str,
@@ -77,7 +82,9 @@ def get_premarket_movement(positions):
                 results.append([
                     symbol,
                     f"{position_data['quantity']:.2f}", 
-                    f"${position_data['entry_price']:.2f}", 
+                    f"${position_data['entry_price']:.2f}",
+                    "No data",
+                    "No data",
                     "No data",
                     "No data",
                     "",
@@ -87,7 +94,9 @@ def get_premarket_movement(positions):
             results.append([
                 symbol,
                 f"{position_data['quantity']:.2f}", 
-                f"${position_data['entry_price']:.2f}", 
+                f"${position_data['entry_price']:.2f}",
+                "Error",
+                "Error",
                 f"Error: {str(e)}",
                 "",
                 "",
@@ -99,7 +108,7 @@ def get_premarket_movement(positions):
 def display_results(results):
     clear_screen()
     if results:
-        headers = ["Symbol", "Quantity", "Entry", "Current", "Today's Move", "Total P/L", "Total Value"]
+        headers = ["Symbol", "Quantity", "Entry", "Prev Close", "Today Open", "Current", "Today's Move", "Total P/L", "Total Value"]
         print("\nPosition Summary:")
         print(tabulate(results, headers=headers, tablefmt="grid"))
     else:
