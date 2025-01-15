@@ -1,97 +1,223 @@
 import yfinance as yf
-import argparse
-from datetime import datetime
-import pytz
+from datetime import datetime, timedelta
+from tabulate import tabulate
+from colorama import init, Fore, Style
+import os
+import sqlite3
 
-def get_stock_info(ticker_symbol):
-    """
-    Fetch stock information for the given ticker symbol
-    """
-    try:
-        # Create ticker object
-        ticker = yf.Ticker(ticker_symbol)
-        
-        # Get stock info
-        info = ticker.info
-        
-        # Get today's data
-        today_data = ticker.history(period='1d')
-        
-        if today_data.empty:
-            return None
+# Initialize colorama
+init()
+
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def get_premarket_movement(positions):
+    results = []
+    for symbol, position_data in positions.items():
+        try:
+            ticker = yf.Ticker(symbol)
+            today = datetime.now().date()
             
-        # Calculate today's gains
-        open_price = today_data['Open'][0]
-        current_price = today_data['Close'][0]
-        price_change = current_price - open_price
-        price_change_percent = (price_change / open_price) * 100
-        
-        return {
-            'name': info.get('longName', 'N/A'),
-            'symbol': ticker_symbol,
-            'current_price': current_price,
-            'open_price': open_price,
-            'price_change': price_change,
-            'price_change_percent': price_change_percent,
-            'volume': today_data['Volume'][0],
-            'market_cap': info.get('marketCap', 'N/A'),
-            'pe_ratio': info.get('trailingPE', 'N/A'),
-            'fifty_two_week_high': info.get('fiftyTwoWeekHigh', 'N/A'),
-            'fifty_two_week_low': info.get('fiftyTwoWeekLow', 'N/A')
-        }
-    except Exception as e:
-        print(f"Error fetching data for {ticker_symbol}: {str(e)}")
-        return None
-
-def format_number(number):
-    """
-    Format large numbers with commas and round floats to 2 decimal places
-    """
-    if isinstance(number, (int, float)):
-        if isinstance(number, float):
-            return f"{number:,.2f}"
-        return f"{number:,}"
-    return number
-
-def display_stock_info(stock_data):
-    """
-    Display formatted stock information
-    """
-    if stock_data is None:
-        print("No data available for the specified stock.")
-        return
-        
-    print("\n=== Stock Information ===")
-    print(f"Name: {stock_data['name']}")
-    print(f"Symbol: {stock_data['symbol']}")
-    print(f"Current Price: ${format_number(stock_data['current_price'])}")
-    print(f"Open Price: ${format_number(stock_data['open_price'])}")
+            # Get today's regular market data
+            today_data = ticker.history(
+                start=today - timedelta(days=1),  # Get yesterday too for reference
+                end=today + timedelta(days=1),
+                interval='1d'
+            )
+            
+            # Get pre-market data
+            premarket_data = ticker.history(
+                start=today,
+                end=today + timedelta(days=1),
+                interval='1m',
+                prepost=True
+            )
+            premarket_data = premarket_data.between_time('04:00', '09:30')
+            
+            if len(today_data) > 0 and len(premarket_data) > 0:
+                current_price = premarket_data['Close'].iloc[-1]
+                entry_price = position_data['entry_price']
+                quantity = position_data['quantity']
+                
+                # Calculate position P/L
+                total_value = quantity * current_price
+                total_cost = quantity * entry_price
+                position_pl = total_value - total_cost
+                position_pl_pct = ((current_price - entry_price) / entry_price) * 100
+                
+                # Calculate today's movement
+                prev_close = today_data['Close'].iloc[-2]  # Yesterday's close
+                today_change = current_price - prev_close
+                today_change_pct = (today_change / prev_close) * 100
+                
+                # Format position P/L string
+                pl_str = f"${position_pl:.2f} ({position_pl_pct:.2f}%)"
+                if position_pl > 0:
+                    pl_str = f"{Fore.GREEN}{pl_str}{Style.RESET_ALL}"
+                elif position_pl < 0:
+                    pl_str = f"{Fore.RED}{pl_str}{Style.RESET_ALL}"
+                
+                # Format today's change string
+                today_change_str = f"${today_change:.2f} ({today_change_pct:.2f}%)"
+                if today_change > 0:
+                    today_change_str = f"{Fore.GREEN}{today_change_str}{Style.RESET_ALL}"
+                elif today_change < 0:
+                    today_change_str = f"{Fore.RED}{today_change_str}{Style.RESET_ALL}"
+                
+                results.append([
+                    symbol,
+                    f"{quantity:.2f}",
+                    f"${entry_price:.2f}",
+                    f"${current_price:.2f}",
+                    today_change_str,
+                    pl_str,
+                    f"${total_value:.2f}"
+                ])
+            else:
+                results.append([
+                    symbol,
+                    f"{position_data['quantity']:.2f}", 
+                    f"${position_data['entry_price']:.2f}", 
+                    "No data",
+                    "No data",
+                    "",
+                    ""
+                ])
+        except Exception as e:
+            results.append([
+                symbol,
+                f"{position_data['quantity']:.2f}", 
+                f"${position_data['entry_price']:.2f}", 
+                f"Error: {str(e)}",
+                "",
+                "",
+                ""
+            ])
     
-    # Format price change with color indicators (+ or -)
-    price_change = stock_data['price_change']
-    price_change_str = f"{'+' if price_change >= 0 else ''}{format_number(price_change)}"
-    percent_change = stock_data['price_change_percent']
-    percent_change_str = f"{'+' if percent_change >= 0 else ''}{format_number(percent_change)}%"
-    
-    print(f"Today's Change: ${price_change_str} ({percent_change_str})")
-    print(f"Volume: {format_number(stock_data['volume'])}")
-    print(f"Market Cap: ${format_number(stock_data['market_cap'])}")
-    print(f"P/E Ratio: {format_number(stock_data['pe_ratio'])}")
-    print(f"52 Week High: ${format_number(stock_data['fifty_two_week_high'])}")
-    print(f"52 Week Low: ${format_number(stock_data['fifty_two_week_low'])}")
-    print("=====================")
+    return results
+
+def display_results(results):
+    clear_screen()
+    if results:
+        headers = ["Symbol", "Quantity", "Entry", "Current", "Today's Move", "Total P/L", "Total Value"]
+        print("\nPosition Summary:")
+        print(tabulate(results, headers=headers, tablefmt="grid"))
+    else:
+        print("\nNo positions added yet!")
+
+def init_database():
+    """Initialize SQLite database and create table if it doesn't exist"""
+    conn = sqlite3.connect('stocks.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS positions
+        (symbol TEXT PRIMARY KEY,
+         quantity REAL NOT NULL,
+         entry_price REAL NOT NULL)
+    ''')
+    conn.commit()
+    conn.close()
+
+def load_positions():
+    """Load positions from database"""
+    conn = sqlite3.connect('stocks.db')
+    c = conn.cursor()
+    c.execute('SELECT symbol, quantity, entry_price FROM positions')
+    positions = {row[0]: {"quantity": row[1], "entry_price": row[2]} for row in c.fetchall()}
+    conn.close()
+    return positions
+
+def save_position(symbol, quantity, entry_price):
+    """Save a position to database"""
+    conn = sqlite3.connect('stocks.db')
+    c = conn.cursor()
+    try:
+        c.execute('''
+            INSERT OR REPLACE INTO positions (symbol, quantity, entry_price) 
+            VALUES (?, ?, ?)
+        ''', (symbol, quantity, entry_price))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        print(f"Error saving position: {e}")
+        return False
+    finally:
+        conn.close()
+
+def remove_position(symbol):
+    """Remove a position from database"""
+    conn = sqlite3.connect('stocks.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM positions WHERE symbol = ?', (symbol,))
+    was_removed = c.rowcount > 0
+    conn.commit()
+    conn.close()
+    return was_removed
+
+def clear_positions():
+    """Clear all positions from database"""
+    conn = sqlite3.connect('stocks.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM positions')
+    conn.commit()
+    conn.close()
 
 def main():
-    # Set up argument parser
-    parser = argparse.ArgumentParser(description='Get stock information for a given ticker symbol')
-    parser.add_argument('ticker', type=str, help='Stock ticker symbol (e.g., AAPL)')
+    init_database()
+    positions = load_positions()
     
-    # Parse arguments
-    args = parser.parse_args()
-    
-    # Get and display stock information
-    stock_data = get_stock_info(args.ticker.upper())
-    display_stock_info(stock_data)
+    while True:
+        print("\nStock Position Tracker")
+        print("1. Add position")
+        print("2. Remove position")
+        print("3. Show current stats")
+        print("4. Clear all positions")
+        print("5. Exit")
+        
+        choice = input("\nEnter your choice (1-5): ")
+        
+        if choice == '1':
+            symbol = input("Enter ticker symbol: ").upper()
+            try:
+                quantity = float(input("Enter quantity: "))
+                entry_price = float(input("Enter entry price: $"))
+                if save_position(symbol, quantity, entry_price):
+                    positions[symbol] = {"quantity": quantity, "entry_price": entry_price}
+                    print(f"Added position: {symbol}")
+                else:
+                    print("Failed to add position!")
+            except ValueError:
+                print("Invalid quantity or price! Please enter numeric values.")
+        
+        elif choice == '2':
+            if positions:
+                symbol = input("Enter ticker symbol to remove: ").upper()
+                if remove_position(symbol):
+                    del positions[symbol]
+                    print(f"Removed position: {symbol}")
+                else:
+                    print("Position not found!")
+            else:
+                print("No positions to remove!")
+        
+        elif choice == '3':
+            if positions:
+                results = get_premarket_movement(positions)
+                display_results(results)
+            else:
+                print("No positions added yet!")
+        
+        elif choice == '4':
+            clear_positions()
+            positions.clear()
+            print("All positions cleared!")
+        
+        elif choice == '5':
+            print("Goodbye!")
+            break
+        
+        else:
+            print("Invalid choice! Please try again.")
 
 if __name__ == "__main__":
     main()
