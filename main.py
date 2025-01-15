@@ -18,9 +18,9 @@ def get_premarket_movement(positions):
             ticker = yf.Ticker(symbol)
             today = datetime.now().date()
             
-            # Get today's regular market data
-            today_data = ticker.history(
-                start=today - timedelta(days=1),
+            # Get market data including yesterday
+            market_data = ticker.history(
+                start=today - timedelta(days=2),  # Get two days ago for yesterday's data
                 end=today + timedelta(days=1),
                 interval='1d'
             )
@@ -34,14 +34,15 @@ def get_premarket_movement(positions):
             )
             premarket_data = premarket_data.between_time('04:00', '09:30')
             
-            if len(today_data) > 0 and len(premarket_data) > 0:
+            if len(market_data) > 1 and len(premarket_data) > 0:
                 current_price = premarket_data['Close'].iloc[-1]
                 entry_price = position_data['entry_price']
                 quantity = position_data['quantity']
                 
-                # Get today's open and previous close
-                prev_close = today_data['Close'].iloc[-2]
-                today_open = today_data['Open'].iloc[-1]
+                # Get yesterday's and today's prices
+                yesterday_open = market_data['Open'].iloc[-2]
+                yesterday_close = market_data['Close'].iloc[-2]
+                today_open = market_data['Open'].iloc[-1]
                 
                 # Calculate position P/L
                 total_value = quantity * current_price
@@ -50,8 +51,12 @@ def get_premarket_movement(positions):
                 position_pl_pct = ((current_price - entry_price) / entry_price) * 100
                 
                 # Calculate today's movement
-                today_change = current_price - prev_close
-                today_change_pct = (today_change / prev_close) * 100
+                today_change = current_price - yesterday_close
+                today_change_pct = (today_change / yesterday_close) * 100
+                
+                # Calculate yesterday's movement
+                yesterday_change = yesterday_close - yesterday_open
+                yesterday_change_pct = (yesterday_change / yesterday_open) * 100
                 
                 # Format position P/L string
                 pl_str = f"${position_pl:.2f} ({position_pl_pct:.2f}%)"
@@ -67,11 +72,20 @@ def get_premarket_movement(positions):
                 elif today_change < 0:
                     today_change_str = f"{Fore.RED}{today_change_str}{Style.RESET_ALL}"
                 
+                # Format yesterday's change string
+                yesterday_change_str = f"${yesterday_change:.2f} ({yesterday_change_pct:.2f}%)"
+                if yesterday_change > 0:
+                    yesterday_change_str = f"{Fore.GREEN}{yesterday_change_str}{Style.RESET_ALL}"
+                elif yesterday_change < 0:
+                    yesterday_change_str = f"{Fore.RED}{yesterday_change_str}{Style.RESET_ALL}"
+                
                 results.append([
                     symbol,
                     f"{quantity:.2f}",
                     f"${entry_price:.2f}",
-                    f"${prev_close:.2f}",
+                    f"${yesterday_open:.2f}",
+                    f"${yesterday_close:.2f}",
+                    yesterday_change_str,
                     f"${today_open:.2f}",
                     f"${current_price:.2f}",
                     today_change_str,
@@ -87,6 +101,8 @@ def get_premarket_movement(positions):
                     "No data",
                     "No data",
                     "No data",
+                    "No data",
+                    "No data",
                     "",
                     ""
                 ])
@@ -95,6 +111,8 @@ def get_premarket_movement(positions):
                 symbol,
                 f"{position_data['quantity']:.2f}", 
                 f"${position_data['entry_price']:.2f}",
+                "Error",
+                "Error",
                 "Error",
                 "Error",
                 f"Error: {str(e)}",
@@ -108,7 +126,8 @@ def get_premarket_movement(positions):
 def display_results(results):
     clear_screen()
     if results:
-        headers = ["Symbol", "Quantity", "Entry", "Prev Close", "Today Open", "Current", "Today's Move", "Total P/L", "Total Value"]
+        headers = ["Symbol", "Quantity", "Entry", "Yest Open", "Yest Close", "Yest Move", 
+                  "Today Open", "Current", "Today's Move", "Total P/L", "Total Value"]
         print("\nPosition Summary:")
         print(tabulate(results, headers=headers, tablefmt="grid"))
     else:
